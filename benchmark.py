@@ -8,9 +8,10 @@ import time
 import jax
 import jax.numpy as jnp
 from mujoco import mjx
+import evosax
 
 from hydrax import ROOT
-from hydrax.algs import PredictiveSampling
+from hydrax.algs import PredictiveSampling, CEM, Evosax
 from hydrax.tasks.cube import CubeRotation
 
 """
@@ -38,9 +39,30 @@ def random_quat():
 task = CubeRotation()
 
 # Set up the controller
+
 ctrl = PredictiveSampling(
-    task, num_samples=32, noise_level=0.2, num_randomizations=32
+    task, 
+    num_samples=64,
+    num_randomizations=16,
+    noise_level=0.5,
 )
+
+# ctrl = CEM(
+#     task,
+#     num_samples=64,
+#     num_randomizations=16,
+#     num_elites=5,
+#     sigma_start=0.5,
+#     sigma_min=0.5,
+# )
+
+# ctrl = Evosax(
+#     task,
+#     evosax.Sep_CMA_ES,
+#     num_samples=64,
+#     elite_ratio=0.1,
+#     num_randomizations=16,
+# )
 
 # Desired planning frequency (Hz)
 frequency = 25
@@ -50,7 +72,7 @@ frequency = 25
 
 # Define the model used for simulation
 mj_model = mujoco.MjModel.from_xml_path(ROOT + "/models/cube/scene.xml")
-mj_model.opt.timestep = 0.005
+mj_model.opt.iterations = 10
 
 # Set the initial state
 mj_data = mujoco.MjData(mj_model)
@@ -59,7 +81,7 @@ mj_data.qvel[:] = np.zeros(mj_model.nv)
 mj_data.mocap_quat[0] = random_quat()
 
 # Total simulation time (seconds)
-run_time = 10.0
+run_time = 60.0
 
 ######################## SIMULATION LOOP ########################
 
@@ -128,6 +150,7 @@ with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
         # Check whether we dropped the cube
         pos = mj_data.site_xpos[mj_model.site("cube_center").id]
         if pos[2] < -0.08:
+            mj_data.mocap_quat[0] = random_quat()
             mj_data.qpos[:] = mj_model.qpos0
             drops += 1
 
