@@ -42,15 +42,15 @@ task = CubeRotation()
 
 ctrl = PredictiveSampling(
     task, 
-    num_samples=64,
-    num_randomizations=16,
+    num_samples=256,
+    num_randomizations=4,
     noise_level=0.5,
 )
 
 # ctrl = CEM(
 #     task,
-#     num_samples=64,
-#     num_randomizations=16,
+#     num_samples=128,
+#     num_randomizations=8,
 #     num_elites=5,
 #     sigma_start=0.5,
 #     sigma_min=0.5,
@@ -73,6 +73,7 @@ frequency = 25
 # Define the model used for simulation
 mj_model = mujoco.MjModel.from_xml_path(ROOT + "/models/cube/scene.xml")
 mj_model.opt.iterations = 10
+mj_model.opt.impratio = 1.0
 
 # Set the initial state
 mj_data = mujoco.MjData(mj_model)
