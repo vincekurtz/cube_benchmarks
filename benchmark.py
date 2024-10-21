@@ -58,6 +58,8 @@ mj_data.qpos[:] = mj_model.qpos0
 mj_data.qvel[:] = np.zeros(mj_model.nv)
 mj_data.mocap_quat[0] = random_quat()
 
+# Total simulation time (seconds)
+run_time = 10.0
 
 ######################## SIMULATION LOOP ########################
 
@@ -80,9 +82,6 @@ print(
 
 # Initialize the controller
 mjx_data = mjx.put_data(mj_model, mj_data)
-mjx_data = mjx_data.replace(
-    mocap_pos=mj_data.mocap_pos, mocap_quat=mj_data.mocap_quat
-)
 policy_params = ctrl.init_params()
 jit_optimize = jax.jit(lambda d, p: ctrl.optimize(d,p)[0], donate_argnums=(1,))
 
@@ -92,8 +91,11 @@ policy_params = jit_optimize(mjx_data, policy_params)
 print(f"Time to jit: {time.time() - st:.3f} seconds")
 
 # Start the simulation
+sim_start_time = time.time()
+drops = 0
+rotations = 0
 with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
-    while viewer.is_running():
+    while viewer.is_running() and mj_data.time < run_time:
         start_time = time.time()
 
         # Set the start state for the controller
@@ -121,10 +123,21 @@ with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
         err = task._get_cube_orientation_err(mj_data)
         if np.linalg.norm(err) < 0.4:
             mj_data.mocap_quat[0] = random_quat()
-            print("Done!")
+            rotations += 1
 
         # Check whether we dropped the cube
         pos = mj_data.site_xpos[mj_model.site("cube_center").id]
         if pos[2] < -0.08:
             mj_data.qpos[:] = mj_model.qpos0
-            print("Dropped!")
+            drops += 1
+
+        # Print some stats
+        rtr = step_dt / (time.time() - start_time)
+        print(f"Rotations: {rotations}, Drops: {drops}, RTR: {rtr:.3f}", end="\r")
+
+# Print a performance summary
+print("\n")
+print(f"Sim time: {mj_data.time:.3f} seconds")
+print(f"Wall time: {time.time() - sim_start_time:.3f} seconds")
+print(f"Rotations: {rotations}")
+print(f"Drops: {drops}")
