@@ -17,7 +17,7 @@ task = CubeRotation()
 
 # Set up the controller
 ctrl = PredictiveSampling(
-task, num_samples=32, noise_level=0.2, num_randomizations=32
+    task, num_samples=32, noise_level=0.2, num_randomizations=32
 )
 
 # Define the model used for simulation
