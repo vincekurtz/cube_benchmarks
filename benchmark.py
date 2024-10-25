@@ -10,7 +10,6 @@ import jax.numpy as jnp
 from mujoco import mjx
 import evosax
 
-from hydrax import ROOT
 from hydrax.algs import PredictiveSampling, CEM, Evosax
 from hydrax.tasks.cube import CubeRotation
 from hydrax.risk import WorstCase, ConditionalValueAtRisk
@@ -73,7 +72,7 @@ frequency = 25
 ######################## SIMULATOR SETUP ########################
 
 # Define the model used for simulation
-mj_model = mujoco.MjModel.from_xml_path(ROOT + "/models/cube/scene.xml")
+mj_model = mujoco.MjModel.from_xml_path("./models/scene.xml")
 mj_model.opt.iterations = 10
 mj_model.opt.impratio = 1.0
 
@@ -106,7 +105,7 @@ print(
 )
 
 # Initialize the controller
-mjx_data = mjx.put_data(mj_model, mj_data)
+mjx_data = mjx.make_data(task.model)
 policy_params = ctrl.init_params()
 jit_optimize = jax.jit(lambda d, p: ctrl.optimize(d,p)[0], donate_argnums=(1,))
 
