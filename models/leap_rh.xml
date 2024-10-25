@@ -5,19 +5,11 @@ Adopted from https://github.com/alberthli/mujoco_mpc/blob/leap-hardware/mjpc/tas
 
 <mujoco model="leap_rh">
   <compiler angle="radian" meshdir="./meshes" />
-  <option timestep="0.01"
+  <option timestep="0.005"
     integrator="implicitfast"
-    impratio="0.1"
-    iterations="4"
-    ls_iterations="10"
-  >
-    <flag eulerdamp="disable" />
-  </option>
-
-  <custom>
-    <numeric data="8" name="max_contact_points" />
-    <numeric data="8" name="max_geom_pairs" />
-  </custom>
+    cone="elliptic"
+    impratio="100"
+  />
 
   <!-- mesh assets -->
   <asset>
@@ -40,7 +32,7 @@ Adopted from https://github.com/alberthli/mujoco_mpc/blob/leap-hardware/mjpc/tas
   <!-- defaults -->
   <default>
     <!-- friction and fingertip geoms -->
-    <geom friction="0.2" solref="0.01 1.5" solimp="0.0 0.95 0.001" />
+    <geom friction="0.2" solref="0.0001 1.0" />
     <default class="cube">
       <geom friction="0.3 0.05 0.01" />
     </default>
