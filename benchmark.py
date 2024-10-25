@@ -13,6 +13,7 @@ import evosax
 from hydrax import ROOT
 from hydrax.algs import PredictiveSampling, CEM, Evosax
 from hydrax.tasks.cube import CubeRotation
+from hydrax.risk import WorstCase, ConditionalValueAtRisk
 
 """
 Run an automated benchmark of the cube rotation task.
@@ -42,9 +43,10 @@ task = CubeRotation()
 
 ctrl = PredictiveSampling(
     task, 
-    num_samples=256,
-    num_randomizations=4,
+    num_samples=128,
+    num_randomizations=16,
     noise_level=0.5,
+    risk_strategy=ConditionalValueAtRisk(0.2),
 )
 
 # ctrl = CEM(
@@ -82,7 +84,7 @@ mj_data.qvel[:] = np.zeros(mj_model.nv)
 mj_data.mocap_quat[0] = random_quat()
 
 # Total simulation time (seconds)
-run_time = 60.0
+run_time = 30.0
 
 ######################## SIMULATION LOOP ########################
 
