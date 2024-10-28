@@ -73,8 +73,6 @@ frequency = 25
 
 # Define the model used for simulation
 mj_model = mujoco.MjModel.from_xml_path("./models/scene.xml")
-mj_model.opt.iterations = 10
-mj_model.opt.impratio = 1.0
 
 # Set the initial state
 mj_data = mujoco.MjData(mj_model)
