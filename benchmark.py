@@ -22,12 +22,28 @@ np.random.seed(0)
 def setup_controller():
     task = CubeRotation()
     ctrl = PredictiveSampling(
-        task,
-        num_samples=64,
-        num_randomizations=8,
-        noise_level=0.5,
-        risk_strategy=ConditionalValueAtRisk(0.2),
+       task,
+       num_samples=64,
+       num_randomizations=8,
+       noise_level=0.5,
     )
+    # ctrl = Evosax(
+    #     task,
+    #     evosax.Sep_CMA_ES,
+    #     num_samples=128,
+    #     elite_ratio=0.5,
+    #     num_randomizations=4,
+    #     risk_strategy=WorstCase(),
+    # )
+    # ctrl = CEM(
+    #    task,
+    #    num_samples=32,
+    #    num_elites=3,
+    #    num_randomizations=32,
+    #    sigma_start=0.5,
+    #    sigma_min=0.5,
+    #    risk_strategy=ConditionalValueAtRisk(0.25),
+    # )
     return ctrl
 
 # Define the model used for simulation
