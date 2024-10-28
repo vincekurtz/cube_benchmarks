@@ -1,5 +1,5 @@
 import time
-from multiprocessing import Process, shared_memory
+from multiprocessing import Process, shared_memory, Lock
 import numpy as np
 
 class SharedMemoryNumpyArray:
@@ -10,14 +10,25 @@ class SharedMemoryNumpyArray:
         Args:
             arr: The numpy array to store in shared memory. Size and dtype must
                  be fixed.
-
-        Warning: The shared memory is writable by all processes that have
-                 access to the shared memory object. Multiple processes should
-                 not write to the shared memory at the same time.
         """
         self.shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
-        self.shared_arr = np.ndarray(arr.shape, dtype=arr.dtype, buffer=self.shm.buf)
+        self.shared_arr = np.ndarray(
+            arr.shape, dtype=arr.dtype, buffer=self.shm.buf)
         self.shared_arr[:] = arr[:]
+        self.lock = Lock()
+
+    def __getitem__(self, key):
+        """Get an item from the shared array."""
+        return self.shared_arr[key]
+    
+    def __setitem__(self, key, value):
+        """Set an item in the shared array."""
+        with self.lock:
+            self.shared_arr[key] = value
+
+    def __str__(self):
+        """Return the string representation of the shared array."""
+        return str(self.shared_arr)
 
     def __del__(self):
         """Clean up the shared memory on deletion."""
@@ -25,22 +36,15 @@ class SharedMemoryNumpyArray:
         self.shm.unlink()
 
 
-def sender(info: SharedMemoryNumpyArray):
-    # Attach to the shared memory
-    arr = info.shared_arr
-
-    # Write to the shared memory
-    for i in range(10):
-        arr[0] = i
-        time.sleep(0.1)
-
-def reciever(info: SharedMemoryNumpyArray):
-    # Attach to the shared memory
-    arr = info.shared_arr
-
+def sender(arr: SharedMemoryNumpyArray):
     for i in range(100):
-        print(arr)
+        arr[0] = i
         time.sleep(0.01)
+
+def reciever(arr: SharedMemoryNumpyArray):
+    for i in range(10):
+        print(arr)
+        time.sleep(0.1)
 
 
 if __name__=="__main__":
