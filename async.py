@@ -14,8 +14,14 @@ from hydrax.tasks.cube import CubeRotation
 from hydrax.algs import PredictiveSampling
 
 
+"""
+Utilities for asynchronous simulation via `multiprocessing`.
+"""
+
+
 class SharedMemoryNumpyArray:
     """Helper class to store a numpy array in shared memory."""
+
     def __init__(self, arr: np.ndarray):
         """Create a shared memory numpy array.
 
@@ -31,7 +37,7 @@ class SharedMemoryNumpyArray:
     def __getitem__(self, key):
         """Get an item from the shared array."""
         return self.data[key]
-    
+
     def __setitem__(self, key, value):
         """Set an item in the shared array."""
         with self.lock:
@@ -54,6 +60,7 @@ class SharedMemoryNumpyArray:
 
 class SharedMemoryMujocoData:
     """Helper class for passing mujoco data between concurrent processes."""
+
     def __init__(self, mj_data: mujoco.MjData):
         """Create shared memory objects for state and control data.
 
@@ -75,7 +82,8 @@ class SharedMemoryMujocoData:
         self.ctrl = SharedMemoryNumpyArray(
             np.zeros(mj_data.ctrl.shape, dtype=np.float32))
 
-def random_quat():
+
+def random_quat() -> np.ndarray:
     """Generate a random unit quaternion."""
     u, v, w = np.random.uniform(size=3)
     return np.array([
@@ -84,6 +92,7 @@ def random_quat():
         np.sqrt(u) * np.sin(2 * np.pi * w),
         np.sqrt(u) * np.cos(2 * np.pi * w),
     ])
+
 
 def simulator(
     shm_data: SharedMemoryMujocoData,
@@ -94,7 +103,7 @@ def simulator(
     finished: Event,
     rotation_times: Queue,
     drop_times: Queue,
-):
+) -> None:
     """Run a simulation loop.
 
     Args:
@@ -152,15 +161,19 @@ def simulator(
     # Signal that the simulation is done
     finished.set()
 
+
 def controller(
     shm_data: SharedMemoryMujocoData,
-    setup_fn: Any,
+    setup_fn: Callable[[], SamplingBasedController],
     ready: Event,
     finished: Event,
     rotation_times: Queue,
     drop_times: Queue,
-):
+) -> None:
     """Run the controller loop.
+
+    Note that we need to create the controller within this process, otherwise
+    JAX will complain about sharing data across processes.
 
     Args:
         shm_data: Shared memory object for communicating with the simulator.
@@ -174,11 +187,12 @@ def controller(
     ctrl = setup_fn()
     mjx_data = mjx.make_data(ctrl.task.model)
     policy_params = ctrl.init_params()
-    
+
     # Jit the optimizer step, then signal that we're ready to go
     print("Jitting controller...")
     st = time.time()
-    jit_optimize = jax.jit(lambda d, p: ctrl.optimize(d,p)[0], donate_argnums=(1,))
+    jit_optimize = jax.jit(lambda d, p: ctrl.optimize(d, p)[
+                           0], donate_argnums=(1,))
     get_action = jax.jit(ctrl.get_action)
     policy_params = jit_optimize(mjx_data, policy_params)
     print(f"Time to jit: {time.time() - st}")
@@ -202,7 +216,8 @@ def controller(
         policy_params = jit_optimize(mjx_data, policy_params)
 
         # Send the action to the simulator
-        shm_data.ctrl[:] = np.array(get_action(policy_params, 0.0), dtype=np.float32)
+        shm_data.ctrl[:] = np.array(get_action(
+            policy_params, 0.0), dtype=np.float32)
 
         # Print the current planning frequency and other info
         num_rotations = rotation_times.qsize()
@@ -237,14 +252,14 @@ def run_benchmark(
     finished = Event()
     rotation_times = Queue()
     drop_times = Queue()
-    
+
     # Set up the simulator and controller processes
-    sim = Process(target=simulator, args=(shm_data, 
-        mj_model, mj_data, run_time, ready, finished, rotation_times, drop_times))
+    sim = Process(target=simulator, args=(
+        shm_data, mj_model, mj_data, run_time, ready, finished, rotation_times, drop_times))
     control = Process(target=controller, args=(
         shm_data, make_controller, ready, finished, rotation_times, drop_times))
 
-    # Run the simulation and controller in parallel 
+    # Run the simulation and controller in parallel
     sim.start()
     control.start()
     sim.join()
@@ -255,7 +270,8 @@ def run_benchmark(
     num_drops = drop_times.qsize()
     return num_rotations, num_drops
 
-if __name__=="__main__":
+
+if __name__ == "__main__":
     np.random.seed(0)
     run_time = 60.0  # Total sim time, in seconds
 
@@ -278,9 +294,9 @@ if __name__=="__main__":
             noise_level=0.5,
         )
         return controller
-    
+
     # Run the benchmark
     num_rotations, num_drops = run_benchmark(
         make_controller, mj_model, mj_data, run_time)
-    
+
     print(f"Rotations: {num_rotations}, Drops: {num_drops}")
