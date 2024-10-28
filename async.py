@@ -74,6 +74,15 @@ class SharedMemoryMujocoData:
         self.ctrl = SharedMemoryNumpyArray(
             np.zeros(mj_data.ctrl.shape, dtype=np.float32))
 
+def random_quat():
+    """Generate a random unit quaternion."""
+    u, v, w = np.random.uniform(size=3)
+    return np.array([
+        np.sqrt(1 - u) * np.sin(2 * np.pi * v),
+        np.sqrt(1 - u) * np.cos(2 * np.pi * v),
+        np.sqrt(u) * np.sin(2 * np.pi * w),
+        np.sqrt(u) * np.cos(2 * np.pi * w),
+    ])
 
 def simulator(
     shm_data: SharedMemoryMujocoData,
@@ -96,6 +105,8 @@ def simulator(
     # Wait for the controller to be ready
     ready.wait()
 
+    rotations = 0
+    drops = 0
     with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
         while viewer.is_running() and mj_data.time < run_time:
             start_time = time.time()
@@ -114,6 +125,22 @@ def simulator(
             mujoco.mj_step(mj_model, mj_data)
             viewer.sync()
 
+            # Check if we're close to the target orientation
+            err = np.zeros(3)
+            q1 = mj_data.mocap_quat[0]
+            q2 = mj_data.qpos[-4:]
+            mujoco.mju_subQuat(err, q1, q2)
+            if np.linalg.norm(err) < 0.4:
+                mj_data.mocap_quat[0] = random_quat()
+                rotations += 1
+
+            # Check if the cube has fallen off the hand
+            pos = mj_data.site_xpos[mj_model.site("cube_center").id]
+            if pos[2] < -0.08:
+                mj_data.mocap_quat[0] = random_quat()
+                mj_data.qpos[:] = mj_model.qpos0
+                drops += 1
+
             # Try to run in roughly real-time
             elapsed_time = time.time() - start_time
             if elapsed_time < mj_model.opt.timestep:
@@ -121,6 +148,11 @@ def simulator(
 
     # Signal that the simulation is done
     finished.set()
+
+    # TODO: properly send these with a queue or something
+    print("")
+    print(f"Rotations: {rotations}, Drops: {drops}")
+    print("")
 
 def controller(
     shm_data: SharedMemoryMujocoData,
@@ -185,6 +217,7 @@ def make_controller():
     return controller
 
 if __name__=="__main__":
+    np.random.seed(0)
     run_time = 60.0  # Total sim time, in seconds
 
     # Set up the simulator model
@@ -194,7 +227,7 @@ if __name__=="__main__":
     # Set the initial state
     mj_data.qpos[:] = mj_model.qpos0
     mj_data.qvel[:] = np.zeros(mj_model.nv)
-    mj_data.mocap_quat[0] = np.array([1., 0., 0., 0.])
+    mj_data.mocap_quat[0] = random_quat()
 
     # Create shared_memory data
     shm_data = SharedMemoryMujocoData(mj_data)
