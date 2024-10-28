@@ -1,5 +1,5 @@
 import time
-from multiprocessing import Process, shared_memory, Lock
+from multiprocessing import Process, shared_memory, Lock, Event
 import numpy as np
 
 import mujoco
@@ -39,6 +39,11 @@ class SharedMemoryNumpyArray:
         self.shm.close()
         self.shm.unlink()
 
+    @property
+    def shape(self):
+        """Return the shape of the shared array."""
+        return self.shared_arr.shape
+
 
 def simulator(
     qpos: SharedMemoryNumpyArray,
@@ -49,6 +54,7 @@ def simulator(
     mj_model: mujoco.MjModel,
     mj_data: mujoco.MjData,
     run_time: float,
+    finished: Event,
 ):
     """Run a simulation loop.
 
@@ -61,6 +67,7 @@ def simulator(
         mj_model: Mujoco model for the simulation.
         mj_data: Mujoco data specifying the initial state.
         run_time: Total simulation time in seconds.
+        finished: Shared flag for stopping the simulation.
     """
     with mujoco.viewer.launch_passive(mj_model, mj_data) as viewer:
         while viewer.is_running() and mj_data.time < run_time:
@@ -85,14 +92,35 @@ def simulator(
             if elapsed_time < mj_model.opt.timestep:
                 time.sleep(mj_model.opt.timestep - elapsed_time)
 
-def reciever(arr: SharedMemoryNumpyArray):
-    for i in range(10):
-        print(arr)
-        time.sleep(0.1)
+    # Signal that the simulation is done
+    finished.set()
+
+def controller(
+    qpos: SharedMemoryNumpyArray,
+    qvel: SharedMemoryNumpyArray,
+    mocap_pos: SharedMemoryNumpyArray,
+    mocap_quat: SharedMemoryNumpyArray,
+    ctrl: SharedMemoryNumpyArray,
+    finished: Event,
+):
+    """Run the controller loop.
+
+    Args:
+        qpos: Where we read the qpos data from shared memory.
+        qvel: Where we read the qvel data from shared memory.
+        mocap_pos: Where we read the mocap_pos data from shared memory.
+        mocap_quat: Where we read the mocap_quat data from shared memory.
+        ctrl: Where we write the control data into shared memory.
+        finished: Shared flag for stopping the simulation.
+    """
+    # TODO: controller setup, jitting, etc.
+    while not finished.is_set():
+        ctrl[:] = np.random.randn(ctrl.shape[0])
+        time.sleep(1.0)
 
 
 if __name__=="__main__":
-    run_time = 30.0  # Total sim time, in seconds
+    run_time = 10.0  # Total sim time, in seconds
 
     # Set up the simulator model
     mj_model = mujoco.MjModel.from_xml_path("./models/scene.xml")
@@ -103,7 +131,7 @@ if __name__=="__main__":
     mj_data.qvel[:] = np.zeros(mj_model.nv)
     mj_data.mocap_quat[0] = np.array([1., 0., 0., 0.])
 
-    # Create shared_memory numpy arrays
+    # Create shared_memory data
     shm_qpos = SharedMemoryNumpyArray(
         np.asarray(mj_data.qpos, dtype=np.float32))
     shm_qvel = SharedMemoryNumpyArray(
@@ -114,24 +142,18 @@ if __name__=="__main__":
         np.asarray(mj_data.mocap_quat, dtype=np.float32))
     shm_ctrl = SharedMemoryNumpyArray(
         np.zeros(mj_model.nu, dtype=np.float32))
+    finished = Event()
     
-    # Start the simulation
+    # Set up the simulator and controller processes
     sim = Process(target=simulator, args=(
         shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl,
-        mj_model, mj_data, run_time))
-    
+        mj_model, mj_data, run_time, finished))
+    control = Process(target=controller, args=(
+        shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl,
+        finished))
+
+    # Run the simulation and controller in parallel 
     sim.start()
+    control.start()
     sim.join()
-
-
-    ## Sender and reciever processes
-    #p1 = Process(target=sender, args=(shm_arr,))
-    #p2 = Process(target=reciever, args=(shm_arr,))
-
-    ## Start the processes
-    #p1.start()
-    #p2.start()
-
-    ## Cleanup
-    #p1.join()
-    #p2.join()
+    control.join()
