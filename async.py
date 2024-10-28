@@ -51,12 +51,32 @@ class SharedMemoryNumpyArray:
         return self.shared_arr.shape
 
 
+class SharedMemoryMujocoData:
+    """Helper class for passing mujoco data between concurrent processes."""
+    def __init__(self, mj_data: mujoco.MjData):
+        """Create shared memory objects for state and control data.
+
+        Note that this does not copy the full mj_data object, only those fields
+        that we want to share between the simulator and controller.
+
+        Args:
+            mj_data: The mujoco data object to store in shared memory.
+        """
+        # N.B. we use float32 to match JAX's default precision
+        self.qpos = SharedMemoryNumpyArray(
+            np.array(mj_data.qpos, dtype=np.float32))
+        self.qvel = SharedMemoryNumpyArray(
+            np.array(mj_data.qvel, dtype=np.float32))
+        self.mocap_pos = SharedMemoryNumpyArray(
+            np.array(mj_data.mocap_pos, dtype=np.float32))
+        self.mocap_quat = SharedMemoryNumpyArray(
+            np.array(mj_data.mocap_quat, dtype=np.float32))
+        self.ctrl = SharedMemoryNumpyArray(
+            np.zeros(mj_data.ctrl.shape, dtype=np.float32))
+
+
 def simulator(
-    qpos: SharedMemoryNumpyArray,
-    qvel: SharedMemoryNumpyArray,
-    mocap_pos: SharedMemoryNumpyArray,
-    mocap_quat: SharedMemoryNumpyArray,
-    ctrl: SharedMemoryNumpyArray,
+    shm_data: SharedMemoryMujocoData,
     mj_model: mujoco.MjModel,
     mj_data: mujoco.MjData,
     run_time: float,
@@ -66,11 +86,7 @@ def simulator(
     """Run a simulation loop.
 
     Args:
-        qpos: Where we write the qpos data into shared memory.
-        qvel: Where we write the qvel data into shared memory.
-        mocap_pos: Where we write the mocap_pos data into shared memory.
-        mocap_quat: Where we write the mocap_quat data into shared memory.
-        ctrl: Where we read the control data from shared memory.
+        shm_data: Shared memory object for communicating with the controller.
         mj_model: Mujoco model for the simulation.
         mj_data: Mujoco data specifying the initial state.
         run_time: Total simulation time in seconds.
@@ -86,13 +102,13 @@ def simulator(
 
             # Send the latest state to shared memory, where the controller can
             # read it
-            qpos[:] = mj_data.qpos
-            qvel[:] = mj_data.qvel
-            mocap_pos[:] = mj_data.mocap_pos
-            mocap_quat[:] = mj_data.mocap_quat
+            shm_data.qpos[:] = mj_data.qpos
+            shm_data.qvel[:] = mj_data.qvel
+            shm_data.mocap_pos[:] = mj_data.mocap_pos
+            shm_data.mocap_quat[:] = mj_data.mocap_quat
 
             # Read the lastest control values from shared memory
-            mj_data.ctrl[:] = ctrl[:]
+            mj_data.ctrl[:] = shm_data.ctrl[:]
 
             # Step the simulation
             mujoco.mj_step(mj_model, mj_data)
@@ -107,11 +123,7 @@ def simulator(
     finished.set()
 
 def controller(
-    qpos: SharedMemoryNumpyArray,
-    qvel: SharedMemoryNumpyArray,
-    mocap_pos: SharedMemoryNumpyArray,
-    mocap_quat: SharedMemoryNumpyArray,
-    ctrl: SharedMemoryNumpyArray,
+    shm_data: SharedMemoryMujocoData,
     setup_fn: Any,
     ready: Event,
     finished: Event,
@@ -119,11 +131,7 @@ def controller(
     """Run the controller loop.
 
     Args:
-        qpos: Where we read the qpos data from shared memory.
-        qvel: Where we read the qvel data from shared memory.
-        mocap_pos: Where we read the mocap_pos data from shared memory.
-        mocap_quat: Where we read the mocap_quat data from shared memory.
-        ctrl: Where we write the control data into shared memory.
+        shm_data: Shared memory object for communicating with the simulator.
         setup_fn: Function to set up the controller.
         ready: Shared flag for starting the simulation.
         finished: Shared flag for stopping the simulation.
@@ -136,22 +144,24 @@ def controller(
     ready.set()
 
     while not finished.is_set():
+        st = time.time()
+
         # Set the start state for the controller, reading the lastest state info
         # from shared memory
         mjx_data = mjx_data.replace(
-            qpos=jnp.array(qpos.data),
-            qvel=jnp.array(qvel.data),
-            mocap_pos=jnp.array(mocap_pos.data),
-            mocap_quat=jnp.array(mocap_quat.data),
+            qpos=jnp.array(shm_data.qpos.data),
+            qvel=jnp.array(shm_data.qvel.data),
+            mocap_pos=jnp.array(shm_data.mocap_pos.data),
+            mocap_quat=jnp.array(shm_data.mocap_quat.data),
         )
 
         # Do a planning step
-        st = time.time()
         policy_params = jit_optimize(mjx_data, policy_params)
-        print(f"Plan time: {time.time() - st}")
 
         # Send the action to the simulator
-        ctrl[:] = np.array(get_action(policy_params, 0.0), dtype=np.float32)
+        shm_data.ctrl[:] = np.array(get_action(policy_params, 0.0), dtype=np.float32)
+        
+        print(f"Plan time: {time.time() - st}")
 
 def make_controller():
     """Set up and jit the controller."""
@@ -171,7 +181,7 @@ def make_controller():
     return mjx_data, policy_params, jit_optimize, controller.get_action
 
 if __name__=="__main__":
-    run_time = 60.0  # Total sim time, in seconds
+    run_time = 10.0  # Total sim time, in seconds
 
     # Set up the simulator model
     mj_model = mujoco.MjModel.from_xml_path("./models/scene.xml")
@@ -183,25 +193,15 @@ if __name__=="__main__":
     mj_data.mocap_quat[0] = np.array([1., 0., 0., 0.])
 
     # Create shared_memory data
-    shm_qpos = SharedMemoryNumpyArray(
-        np.asarray(mj_data.qpos, dtype=np.float32))
-    shm_qvel = SharedMemoryNumpyArray(
-        np.asarray(mj_data.qvel, dtype=np.float32))
-    shm_mocap_pos = SharedMemoryNumpyArray(
-        np.asarray(mj_data.mocap_pos, dtype=np.float32))
-    shm_mocap_quat = SharedMemoryNumpyArray(
-        np.asarray(mj_data.mocap_quat, dtype=np.float32))
-    shm_ctrl = SharedMemoryNumpyArray(
-        np.zeros(mj_model.nu, dtype=np.float32))
+    shm_data = SharedMemoryMujocoData(mj_data)
     ready = Event()
     finished = Event()
     
     # Set up the simulator and controller processes
-    sim = Process(target=simulator, args=(
-        shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl,
+    sim = Process(target=simulator, args=(shm_data, 
         mj_model, mj_data, run_time, ready, finished))
     control = Process(target=controller, args=(
-        shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl, make_controller, ready, finished))
+        shm_data, make_controller, ready, finished))
 
     # Run the simulation and controller in parallel 
     sim.start()
@@ -210,4 +210,4 @@ if __name__=="__main__":
     control.join()
 
     # Clean up shared memory
-    del shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl
+    del shm_data
