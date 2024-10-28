@@ -21,12 +21,12 @@ np.random.seed(0)
 # python multiprocessing to play well together.
 def setup_controller():
     task = CubeRotation()
-    ctrl = PredictiveSampling(
-       task,
-       num_samples=64,
-       num_randomizations=8,
-       noise_level=0.5,
-    )
+    # ctrl = PredictiveSampling(
+    #    task,
+    #    num_samples=64,
+    #    num_randomizations=8,
+    #    noise_level=0.5,
+    # )
     # ctrl = Evosax(
     #     task,
     #     evosax.Sep_CMA_ES,
@@ -35,15 +35,15 @@ def setup_controller():
     #     num_randomizations=4,
     #     risk_strategy=WorstCase(),
     # )
-    # ctrl = CEM(
-    #    task,
-    #    num_samples=32,
-    #    num_elites=3,
-    #    num_randomizations=32,
-    #    sigma_start=0.5,
-    #    sigma_min=0.5,
-    #    risk_strategy=ConditionalValueAtRisk(0.25),
-    # )
+    ctrl = CEM(
+       task,
+       num_samples=32,
+       num_elites=3,
+       num_randomizations=16,
+       sigma_start=0.5,
+       sigma_min=0.5,
+       risk_strategy=ConditionalValueAtRisk(0.5),
+    )
     return ctrl
 
 # Define the model used for simulation
