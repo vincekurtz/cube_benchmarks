@@ -1,9 +1,16 @@
+from typing import Any, Callable
+import jax
 import time
 from multiprocessing import Process, shared_memory, Lock, Event
 import numpy as np
+import jax.numpy as jnp
 
 import mujoco
 import mujoco.viewer
+from mujoco import mjx
+
+from hydrax.tasks.cube import CubeRotation
+from hydrax.algs import PredictiveSampling
 
 
 class SharedMemoryNumpyArray:
@@ -101,6 +108,9 @@ def controller(
     mocap_pos: SharedMemoryNumpyArray,
     mocap_quat: SharedMemoryNumpyArray,
     ctrl: SharedMemoryNumpyArray,
+    mjx_data: mjx.Data,
+    policy_params: Any,
+    jit_optimize: Callable[[mjx.Data, Any], Any],
     finished: Event,
 ):
     """Run the controller loop.
@@ -111,16 +121,51 @@ def controller(
         mocap_pos: Where we read the mocap_pos data from shared memory.
         mocap_quat: Where we read the mocap_quat data from shared memory.
         ctrl: Where we write the control data into shared memory.
+        mjx_data: Mujoco MJX data that the controlelr uses.
+        policy_params: Initial policy parameters for the controller.
+        jit_optimize: Jitted optimization function for the controller.
         finished: Shared flag for stopping the simulation.
     """
+    task = CubeRotation()
+    controller = PredictiveSampling(
+        task,
+        num_samples=128,
+        num_randomizations=16,
+        noise_level=0.5,
+    )
+    mjx_data = mjx.make_data(task.model)
+    policy_params = controller.init_params()
+    
+    jit_optimize = jax.jit(lambda d, p: controller.optimize(d,p)[0], donate_argnums=(1,))
+
+    print("Jitting controller...")
+    st = time.time()
+    policy_params = jit_optimize(mjx_data, policy_params)
+    print(f"Time to jit: {time.time() - st}")
+    print("")
+
     # TODO: controller setup, jitting, etc.
     while not finished.is_set():
-        ctrl[:] = np.random.randn(ctrl.shape[0])
-        time.sleep(1.0)
+        # Set the start state for the controller, reading the lastest state info
+        # from shared memory
+        mjx_data = mjx_data.replace(
+            qpos=jnp.array(qpos.shared_arr),
+            qvel=jnp.array(qvel.shared_arr),
+            mocap_pos=jnp.array(mocap_pos.shared_arr),
+            mocap_quat=jnp.array(mocap_quat.shared_arr),
+        )
+
+        # Do a planning step
+        st = time.time()
+        policy_params = jit_optimize(mjx_data, policy_params)
+        print(f"Plan time: {time.time() - st}")
+
+        # Send the action to the simulator
+        ctrl[:] = np.array(controller.get_action(policy_params, 0.0), dtype=np.float32)
 
 
 if __name__=="__main__":
-    run_time = 10.0  # Total sim time, in seconds
+    run_time = 60.0  # Total sim time, in seconds
 
     # Set up the simulator model
     mj_model = mujoco.MjModel.from_xml_path("./models/scene.xml")
@@ -150,10 +195,16 @@ if __name__=="__main__":
         mj_model, mj_data, run_time, finished))
     control = Process(target=controller, args=(
         shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl,
-        finished))
+        None, None, None, finished))
 
     # Run the simulation and controller in parallel 
     sim.start()
     control.start()
     sim.join()
     control.join()
+
+    del shm_qpos
+    del shm_qvel
+    del shm_mocap_pos
+    del shm_mocap_quat
+    del shm_ctrl
