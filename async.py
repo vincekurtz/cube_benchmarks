@@ -112,6 +112,7 @@ def controller(
     mocap_pos: SharedMemoryNumpyArray,
     mocap_quat: SharedMemoryNumpyArray,
     ctrl: SharedMemoryNumpyArray,
+    setup_fn: Any,
     ready: Event,
     finished: Event,
 ):
@@ -123,30 +124,15 @@ def controller(
         mocap_pos: Where we read the mocap_pos data from shared memory.
         mocap_quat: Where we read the mocap_quat data from shared memory.
         ctrl: Where we write the control data into shared memory.
+        setup_fn: Function to set up the controller.
         ready: Shared flag for starting the simulation.
         finished: Shared flag for stopping the simulation.
     """
-    # N.B. We need to set up the task and controller here, otherwise jax
-    # complains about being in a multithreaded setting
-    task = CubeRotation()
-    controller = PredictiveSampling(
-        task,
-        num_samples=128,
-        num_randomizations=8,
-        noise_level=0.5,
-    )
-    mjx_data = mjx.make_data(task.model)
-    policy_params = controller.init_params()
-    
-    jit_optimize = jax.jit(lambda d, p: controller.optimize(d,p)[0], donate_argnums=(1,))
-
-    print("Jitting controller...")
+    # Jit the optimizer step, then signal that we're ready to go
     st = time.time()
-    policy_params = jit_optimize(mjx_data, policy_params)
+    print("Jitting controller...")
+    mjx_data, policy_params, jit_optimize, get_action = setup_fn()
     print(f"Time to jit: {time.time() - st}")
-    print("")
-
-    # Signal that the controller is ready to go
     ready.set()
 
     while not finished.is_set():
@@ -165,8 +151,24 @@ def controller(
         print(f"Plan time: {time.time() - st}")
 
         # Send the action to the simulator
-        ctrl[:] = np.array(controller.get_action(policy_params, 0.0), dtype=np.float32)
+        ctrl[:] = np.array(get_action(policy_params, 0.0), dtype=np.float32)
 
+def make_controller():
+    """Set up and jit the controller."""
+    task = CubeRotation()
+    controller = PredictiveSampling(
+        task,
+        num_samples=128,
+        num_randomizations=8,
+        noise_level=0.5,
+    )
+    mjx_data = mjx.make_data(task.model)
+    policy_params = controller.init_params()
+    
+    jit_optimize = jax.jit(lambda d, p: controller.optimize(d,p)[0], donate_argnums=(1,))
+    policy_params = jit_optimize(mjx_data, policy_params)
+
+    return mjx_data, policy_params, jit_optimize, controller.get_action
 
 if __name__=="__main__":
     run_time = 60.0  # Total sim time, in seconds
@@ -199,7 +201,7 @@ if __name__=="__main__":
         shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl,
         mj_model, mj_data, run_time, ready, finished))
     control = Process(target=controller, args=(
-        shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl, ready, finished))
+        shm_qpos, shm_qvel, shm_mocap_pos, shm_mocap_quat, shm_ctrl, make_controller, ready, finished))
 
     # Run the simulation and controller in parallel 
     sim.start()
