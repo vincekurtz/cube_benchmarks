@@ -151,6 +151,7 @@ def simulator(
             if pos[2] < -0.08:
                 mj_data.mocap_quat[0] = random_quat()
                 mj_data.qpos[:] = mj_model.qpos0
+                mj_data.qvel[:] = np.zeros(mj_model.nv)
                 drop_times.put(mj_data.time)
 
             # Try to run in roughly real-time

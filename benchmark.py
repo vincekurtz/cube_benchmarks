@@ -1,13 +1,8 @@
 #!/usr/bin/env python
 
+import evosax
 import mujoco
 import numpy as np
-import time
-
-import jax
-import jax.numpy as jnp
-from mujoco import mjx
-import evosax
 
 from async_utils import run_benchmark, random_quat
 
