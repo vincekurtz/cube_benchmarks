@@ -136,11 +136,20 @@ def controller(
         ready: Shared flag for starting the simulation.
         finished: Shared flag for stopping the simulation.
     """
+    # Set up the controller
+    ctrl = setup_fn()
+    mjx_data = mjx.make_data(ctrl.task.model)
+    policy_params = ctrl.init_params()
+    
     # Jit the optimizer step, then signal that we're ready to go
-    st = time.time()
     print("Jitting controller...")
-    mjx_data, policy_params, jit_optimize, get_action = setup_fn()
+    st = time.time()
+    jit_optimize = jax.jit(lambda d, p: ctrl.optimize(d,p)[0], donate_argnums=(1,))
+    get_action = jax.jit(ctrl.get_action)
+    policy_params = jit_optimize(mjx_data, policy_params)
     print(f"Time to jit: {time.time() - st}")
+
+    # Signal that we're ready to start
     ready.set()
 
     while not finished.is_set():
@@ -160,28 +169,23 @@ def controller(
 
         # Send the action to the simulator
         shm_data.ctrl[:] = np.array(get_action(policy_params, 0.0), dtype=np.float32)
-        
-        print(f"Plan time: {time.time() - st}")
+
+        # Print the current planning frequency 
+        print(f"Control running at: {1/(time.time() - st):.2f} Hz", end="\r")
 
 def make_controller():
-    """Set up and jit the controller."""
+    """Set up the controller."""
     task = CubeRotation()
     controller = PredictiveSampling(
         task,
-        num_samples=128,
+        num_samples=64,
         num_randomizations=8,
         noise_level=0.5,
     )
-    mjx_data = mjx.make_data(task.model)
-    policy_params = controller.init_params()
-    
-    jit_optimize = jax.jit(lambda d, p: controller.optimize(d,p)[0], donate_argnums=(1,))
-    policy_params = jit_optimize(mjx_data, policy_params)
-
-    return mjx_data, policy_params, jit_optimize, controller.get_action
+    return controller
 
 if __name__=="__main__":
-    run_time = 10.0  # Total sim time, in seconds
+    run_time = 60.0  # Total sim time, in seconds
 
     # Set up the simulator model
     mj_model = mujoco.MjModel.from_xml_path("./models/scene.xml")
